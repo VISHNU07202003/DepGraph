@@ -24,15 +24,96 @@ const raw = JSON.parse(readFileSync(CATALOG, "utf-8"));
 const tools = Array.isArray(raw) ? raw : (raw.tools ?? []);
 const slugs = new Set<string>(
   tools
-    .map((t: any) => String(t.slug ?? t.name ?? t.function?.name ?? "").toUpperCase())
+    .map((t: any) =>
+      String(t.slug ?? t.name ?? t.function?.name ?? "").toUpperCase(),
+    )
     .filter(Boolean),
 );
 
 const g = JSON.parse(readFileSync(OUT, "utf-8"));
-const nodes = g.nodes ?? [];
-const edges = g.edges ?? [];
-const inCatalog = nodes.filter((n: any) => slugs.has(String(n.id).toUpperCase())).length;
+if (!Array.isArray(g.nodes) || !Array.isArray(g.edges)) {
+  throw new Error("Graph must contain nodes and edges arrays");
+}
+
+const nodes = g.nodes;
+const edges = g.edges;
+if (nodes.some((node: any) => typeof node?.id !== "string")) {
+  throw new Error("Every graph node must have a string id");
+}
+
+const nodeIds = new Set<string>(nodes.map((node: any) => node.id));
+if (nodeIds.size !== nodes.length) {
+  throw new Error("Graph contains duplicate node ids");
+}
+
+const inCatalog = nodes.filter((n: any) =>
+  slugs.has(String(n.id).toUpperCase()),
+).length;
 const provenance = nodes.length ? inCatalog / nodes.length : 0;
+if (provenance !== 1) {
+  throw new Error(`Node provenance must be 1.0; got ${provenance}`);
+}
+
+const edgeKeys = new Set<string>();
+for (const edge of edges) {
+  if (
+    typeof edge?.from !== "string" ||
+    typeof edge?.to !== "string" ||
+    typeof edge?.label !== "string" ||
+    !edge.label.trim()
+  ) {
+    throw new Error("Every graph edge must have string from/to/label values");
+  }
+  if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+    throw new Error(
+      `Edge references an unknown node: ${edge.from} -> ${edge.to}`,
+    );
+  }
+
+  const key = `${edge.from}\0${edge.to}\0${edge.label}`;
+  if (edgeKeys.has(key)) {
+    throw new Error(
+      `Graph contains duplicate edge: ${edge.from} -> ${edge.to} (${edge.label})`,
+    );
+  }
+  edgeKeys.add(key);
+}
+
+if (edges.length === 0) {
+  throw new Error("Graph must contain at least one dependency edge");
+}
+
+const hasEdge = (from: string, to: string, label: string) =>
+  edges.some(
+    (edge: any) => edge.from === from && edge.to === to && edge.label === label,
+  );
+
+const expectedEdges = [
+  [
+    "GITHUB_LIST_REPOSITORY_ISSUES",
+    "GITHUB_CREATE_AN_ISSUE_COMMENT",
+    "issue_number",
+  ],
+  ["GITHUB_LIST_PULL_REQUESTS", "GITHUB_MERGE_A_PULL_REQUEST", "pull_number"],
+] as const;
+
+for (const [from, to, label] of expectedEdges) {
+  if (!hasEdge(from, to, label)) {
+    throw new Error(`Missing expected dependency: ${from} -> ${to} (${label})`);
+  }
+}
+
+if (
+  hasEdge(
+    "GITHUB_GET_A_PACKAGE_FOR_A_USER",
+    "GITHUB_DELETE_PACKAGE_VERSION",
+    "package_version_id",
+  )
+) {
+  throw new Error(
+    "Package metadata must not be treated as a package-version identifier source",
+  );
+}
 
 console.log(
   JSON.stringify(
@@ -46,12 +127,4 @@ console.log(
     2,
   ),
 );
-
-if (provenance < 0.8) {
-  console.error(
-    "WARNING: provenance < 0.8. Your node ids must be slugs from the catalog you were given.",
-  );
-}
-if (edges.length === 0) {
-  console.error("WARNING: 0 edges. A graph with no dependencies fails the has-edges gate.");
-}
+console.log("Selfcheck passed.");

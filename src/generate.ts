@@ -195,12 +195,13 @@ function relatedEntity(
 
   if (entityTokens.length === 0) return false;
 
-  return entityTokens.some(
+  const availableTokens = new Set([...producerTokens, ...pathTokens]);
+
+  return entityTokens.every(
     token =>
-      producerTokens.includes(token) ||
-      pathTokens.includes(token) ||
-      producerTokens.includes(`${token}s`) ||
-      producerTokens.includes(token.replace(/s$/, "")),
+      availableTokens.has(token) ||
+      availableTokens.has(`${token}s`) ||
+      availableTokens.has(token.replace(/s$/, "")),
   );
 }
 

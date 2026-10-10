@@ -54,3 +54,42 @@ once you are done, run `litmus submit` from your assessment folder. make sure yo
 your work is tracked automatically while you work (file changes, git history, and AI-tool prompts) and included when you `litmus submit`. there is nothing to run, just commit often.
 
 NOTE:  Feel free to use LLM, you will be judged by the quality of output, eval...
+
+## Run the generator
+
+Install the project dependencies, then pass a toolkit catalog path to the generator:
+
+```sh
+npm install --legacy-peer-deps
+npm run generate -- path/to/catalog.json
+```
+
+The catalog path is the final command-line argument. The generator writes
+`dependency_graph.json` in the current working directory. The build and run
+commands used by the assessment are declared in `generator.json`.
+
+The output contains one node per catalog tool and directed edges from a producer
+to a consumer. An edge label is a required consumer input that the producer's
+output schema can supply. Matching considers identifier fields and entity context;
+for compound identifiers it requires the producer context to cover every
+meaningful entity token, so a package is not treated as a package version.
+
+## View the graph
+
+Open `visualization.html` in a browser and select the generated
+`dependency_graph.json`. Search for a tool slug to show its connections, then
+choose incoming, outgoing, or both directions. The view shows up to 30 matching
+edges at a time; larger neighborhoods can be scrolled.
+
+## Validate
+
+Run the catalog-backed selfcheck:
+
+```sh
+npm run selfcheck
+```
+
+It regenerates the graph from `github_catalog.json`, checks provenance and
+labeled edges, and verifies representative GitHub dependencies plus a
+package-versus-package-version negative case. The committed catalog and graph
+are `github_catalog.json` and `dependency_graph.json`.
