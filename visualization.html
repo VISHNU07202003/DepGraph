@@ -1,0 +1,258 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tool Dependency Explorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #0b1220;
+    color: #e5e7eb;
+  }
+  header {
+    padding: 22px 30px;
+    border-bottom: 1px solid #334155;
+  }
+  h1 { margin: 0 0 8px; font-size: 25px; }
+  p { color: #94a3b8; margin: 0; }
+  .controls {
+    display: flex;
+    gap: 12px;
+    padding: 18px 30px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  input, select {
+    background: #172337;
+    border: 1px solid #475569;
+    color: white;
+    padding: 11px;
+    border-radius: 8px;
+  }
+  #search { width: min(100%, 470px); }
+  .stats { color: #94a3b8; padding: 0 30px 14px; }
+  #graph {
+    width: 100%;
+    height: 68vh;
+    background: #101a2d;
+    border-top: 1px solid #334155;
+  }
+  .node rect {
+    fill: #1e3a5f;
+    stroke: #60a5fa;
+    stroke-width: 1.5;
+    rx: 9;
+  }
+  .node text {
+    fill: #f8fafc;
+    font-size: 12px;
+  }
+  .edge {
+    stroke: #64748b;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrow);
+  }
+  .edge-label {
+    fill: #fbbf24;
+    font-size: 11px;
+    text-anchor: middle;
+  }
+  .message { padding: 30px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tool Dependency Explorer</h1>
+  <p>Explore producer-to-consumer dependencies across toolkit actions.</p>
+</header>
+
+<div class="controls">
+  <input id="file" type="file" accept=".json">
+  <input id="search" placeholder="Search tool slug..." list="toolNames">
+  <datalist id="toolNames"></datalist>
+  <select id="direction">
+    <option value="both">Incoming + outgoing</option>
+    <option value="incoming">Incoming dependencies</option>
+    <option value="outgoing">Outgoing dependencies</option>
+  </select>
+</div>
+
+<div class="stats" id="stats">Upload dependency_graph.json to begin.</div>
+<svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<script>
+let graph = { nodes: [], edges: [] };
+
+const svg = document.getElementById("graph");
+const search = document.getElementById("search");
+const direction = document.getElementById("direction");
+const stats = document.getElementById("stats");
+
+document.getElementById("file").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+      throw new Error("Expected nodes and edges arrays");
+    }
+
+    graph = parsed;
+
+    const list = document.getElementById("toolNames");
+    list.replaceChildren();
+
+    for (const node of graph.nodes) {
+      const option = document.createElement("option");
+      option.value = node.id;
+      list.appendChild(option);
+    }
+
+    stats.textContent =
+      `${graph.nodes.length} tools · ${graph.edges.length} dependencies`;
+
+    render();
+  } catch (error) {
+    stats.textContent = `Invalid graph: ${error.message}`;
+  }
+});
+
+search.addEventListener("input", render);
+direction.addEventListener("change", render);
+
+function element(name, attributes = {}, text = null) {
+  const node = document.createElementNS(
+    "http://www.w3.org/2000/svg", name
+  );
+  for (const [key, value] of Object.entries(attributes)) {
+    node.setAttribute(key, String(value));
+  }
+  if (text !== null) node.textContent = text;
+  return node;
+}
+
+function render() {
+  svg.replaceChildren();
+
+  const query = search.value.trim().toLowerCase();
+  if (!query) {
+    stats.textContent =
+      `${graph.nodes.length} tools · ${graph.edges.length} dependencies. Search for a tool to explore its connections.`;
+    return;
+  }
+
+  const selected = graph.nodes.find(
+    node => node.id.toLowerCase() === query
+  ) ?? graph.nodes.find(
+    node => node.id.toLowerCase().includes(query)
+  );
+
+  if (!selected) {
+    stats.textContent = "No matching tool found.";
+    return;
+  }
+
+  const related = graph.edges.filter(edge => {
+    if (direction.value === "incoming") return edge.to === selected.id;
+    if (direction.value === "outgoing") return edge.from === selected.id;
+    return edge.from === selected.id || edge.to === selected.id;
+  });
+
+  const limited = related.slice(0, 30);
+  const width = Math.max(svg.clientWidth, 850);
+  const height = Math.max(500, limited.length * 58 + 100);
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+  const defs = element("defs");
+  const marker = element("marker", {
+    id: "arrow",
+    markerWidth: 10,
+    markerHeight: 10,
+    refX: 9,
+    refY: 3,
+    orient: "auto",
+    markerUnits: "strokeWidth"
+  });
+  marker.appendChild(element("path", {
+    d: "M0,0 L0,6 L9,3 z",
+    fill: "#64748b"
+  }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  const positions = new Map();
+  positions.set(selected.id, { x: centerX, y: centerY });
+
+  const others = [...new Set(
+    limited.map(edge => edge.from === selected.id ? edge.to : edge.from)
+  )];
+
+  others.forEach((id, index) => {
+    const angle = (2 * Math.PI * index / Math.max(others.length, 1));
+    const radius = Math.min(width * 0.35, height * 0.36);
+
+    positions.set(id, {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius
+    });
+  });
+
+  for (const edge of limited) {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to) continue;
+
+    svg.appendChild(element("line", {
+      x1: from.x,
+      y1: from.y,
+      x2: to.x,
+      y2: to.y,
+      class: "edge"
+    }));
+
+    svg.appendChild(element("text", {
+      x: (from.x + to.x) / 2,
+      y: (from.y + to.y) / 2 - 8,
+      class: "edge-label"
+    }, edge.label ?? ""));
+  }
+
+  for (const [id, pos] of positions) {
+    const group = element("g", { class: "node" });
+    const boxWidth = 250;
+
+    group.appendChild(element("rect", {
+      x: pos.x - boxWidth / 2,
+      y: pos.y - 22,
+      width: boxWidth,
+      height: 44
+    }));
+
+    const label = id.length > 33 ? id.slice(0, 30) + "..." : id;
+    const text = element("text", {
+      x: pos.x,
+      y: pos.y + 4,
+      "text-anchor": "middle"
+    }, label);
+
+    text.appendChild(element("title", {}, id));
+    group.appendChild(text);
+    svg.appendChild(group);
+  }
+
+  stats.textContent =
+    `${selected.id} · ${related.length} dependencies (${limited.length} displayed)`;
+}
+</script>
+</body>
+</html>
